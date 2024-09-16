@@ -13,6 +13,7 @@ from PIL import Image
 from .build_gemotry import initialization, build_gemotry
 from sklearn.cluster import k_means
 import scipy
+import matplotlib.pyplot as plt
 
 param = initialization()
 ray_trafo = build_gemotry(param)
@@ -28,7 +29,7 @@ def proj_get_minmax():
 sigma = 1
 smFilter = sio.loadmat('deeplesion/gaussianfilter.mat')['smFilter']
 miuAir = 0
-miuWater=0.192
+miuWater=0.192 / 10
 starpoint = np.zeros([3, 1])
 starpoint[0] = miuAir
 starpoint[1] = miuWater
@@ -49,7 +50,12 @@ def nmarprior(im,threshWater,threshBone,miuAir,miuWater,smFilter):
     return priorimgHU
 
 def nmar_prior(XLI, M):
-    XLI[M == 1] = 0.192
+    XLI[M == 1] = 0.192 / 10
+
+    # plt.figure()
+    # plt.imshow(XLI,cmap='gray')
+    # plt.show()
+
     h, w = XLI.shape[0], XLI.shape[1]
     im1d = XLI.reshape(h * w, 1)
     best_centers, labels, best_inertia = k_means(im1d, n_clusters=3, init=starpoint, max_iter=300)
@@ -110,6 +116,106 @@ class MARTrainDataset(udata.Dataset):
         Sma = normalize(Sma, proj_get_minmax())
         Sgt = normalize(Sgt, proj_get_minmax())
         SLI = normalize(SLI, proj_get_minmax())
+        Tr = 1 -Tr.astype(np.float32)
+        Tr = np.transpose(np.expand_dims(Tr, 2), (2, 0, 1))
+        Mask = M.astype(np.float32)
+        Mask = np.transpose(np.expand_dims(Mask, 2), (2, 0, 1))
+        return torch.Tensor(Xma), torch.Tensor(XLI), torch.Tensor(Xgt), torch.Tensor(Mask), \
+               torch.Tensor(Sma), torch.Tensor(SLI), torch.Tensor(Sgt), torch.Tensor(Tr), torch.Tensor(Xprior)
+    
+class DentalTrainDataset(udata.Dataset):
+    def __init__(self, dir, patchSize, mask):
+        super().__init__()
+        self.dir = dir
+        self.train_mask = mask
+        self.patch_size = patchSize
+        # self.txtdir = os.path.join(self.dir, 'train_640geo_dir.txt')
+        # self.mat_files = open(self.txtdir, 'r').readlines()
+        self.mat_files = [f for f in os.listdir(dir) if f.endswith('.mat')]
+        self.rand_state = RandomState(66)
+    def __len__(self):
+        return len(self.mat_files)
+
+    def __getitem__(self, idx):
+        mat_path = os.path.join(self.dir, self.mat_files[idx])
+        mat_data = sio.loadmat(mat_path)
+        struct_data = mat_data['images']
+
+        Xma = struct_data['Input'][0,0]
+        # Sma = struct_data['Projection'][0,0]
+        XLI = struct_data['Intp'][0,0]
+        SLI = struct_data['IntpProjection'][0,0]
+        Tr = struct_data['MetalTrace'][0,0]
+        Xgt = struct_data['Label'][0,0]
+        M = Xma.copy()
+        M[M>=0.1] = 1
+        M[M<0.1] = 0
+
+        # Sma = np.transpose(Sma,(1,0))
+        Sma = np.asarray(ray_trafo(Xma))
+        # SLI = np.transpose(SLI,(1,0))
+        # Tr = np.transpose(Tr,(1,0))
+
+        # plt.figure()
+        # plt.subplot(2,3,1)
+        # plt.imshow(Xma,cmap='gray')
+        # plt.subplot(2,3,2)
+        # plt.imshow(Sma,cmap='gray')
+        # plt.subplot(2,3,3)
+        # plt.imshow(XLI,cmap='gray')
+        # plt.subplot(2,3,4)
+        # plt.imshow(SLI,cmap='gray')
+        # plt.subplot(2,3,5)
+        # plt.imshow(Tr,cmap='gray')
+        # plt.subplot(2,3,6)
+        # plt.imshow(Xgt,cmap='gray')
+        # plt.show()
+
+    #     gt_dir = self.mat_files[idx]
+    #   #  random_mask = random.randint(0, 89)  # include 89
+    #     random_mask = random.randint(0, 9)  # for demo
+    #     file_dir = gt_dir[:-6]
+    #     data_file = file_dir + str(random_mask) + '.h5'
+    #     abs_dir = os.path.join(self.dir, 'train_640geo/', data_file)
+    #     gt_absdir = os.path.join(self.dir,'train_640geo/', gt_dir[:-1])
+    #     gt_file = h5py.File(gt_absdir, 'r')
+    #     Xgt = gt_file['image'][()]
+    #     gt_file.close()
+    #     file = h5py.File(abs_dir, 'r')
+    #     Xma= file['ma_CT'][()]
+    #     Sma = file['ma_sinogram'][()]
+    #     XLI =file['LI_CT'][()]
+    #     SLI = file['LI_sinogram'][()]
+    #     Tr = file['metal_trace'][()]
+    #     file.close()
+    
+        Sgt = np.asarray(ray_trafo(Xgt))
+    #     M512 = self.train_mask[:,:,random_mask]
+    #     M = np.array(Image.fromarray(M512).resize((416, 416), PIL.Image.BILINEAR))
+        Xprior = nmar_prior(XLI.copy(), M)
+        Xprior = normalize(Xprior, image_get_minmax())  # *255
+        Xma = normalize(Xma, image_get_minmax())
+        Xgt = normalize(Xgt, image_get_minmax())
+        XLI = normalize(XLI, image_get_minmax())
+        Sma = normalize(Sma, proj_get_minmax())
+        Sgt = normalize(Sgt, proj_get_minmax())
+        SLI = normalize(SLI, proj_get_minmax())
+
+        plt.figure()
+        plt.subplot(2,3,1)
+        plt.imshow(Xma[0],cmap='gray')
+        plt.subplot(2,3,2)
+        plt.imshow(XLI[0],cmap='gray')
+        plt.subplot(2,3,3)
+        plt.imshow(Xgt[0],cmap='gray')
+        plt.subplot(2,3,4)
+        plt.imshow(Xprior[0],cmap='gray')
+        plt.subplot(2,3,5)
+        plt.imshow(SLI[0],cmap='gray')
+        plt.subplot(2,3,6)
+        plt.imshow(Sgt[0],cmap='gray')
+        plt.show()
+
         Tr = 1 -Tr.astype(np.float32)
         Tr = np.transpose(np.expand_dims(Tr, 2), (2, 0, 1))
         Mask = M.astype(np.float32)

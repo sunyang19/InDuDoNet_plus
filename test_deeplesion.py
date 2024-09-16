@@ -19,8 +19,8 @@ warnings.filterwarnings("ignore")
 
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 parser = argparse.ArgumentParser(description="YU_Test")
-parser.add_argument("--model_dir", type=str, default="models", help='path to model and log files')
-parser.add_argument("--data_path", type=str, default="deeplesion/test/", help='path to training data')
+parser.add_argument("--model_dir", type=str, default="./models/InDuDoNet+_latest.pt", help='path to model and log files')
+parser.add_argument("--data_path", type=str, default="../UDA-MAR/Dental_train", help='path to training data')
 parser.add_argument("--use_GPU", type=bool, default=True, help='use GPU or not')
 parser.add_argument("--save_path", type=str, default="./test_results/", help='path to training data')
 parser.add_argument('--num_channel', type=int, default=32, help='the number of dual channels')
@@ -101,7 +101,7 @@ def nmar_prior(XLI, M):
 
 param = initialization()
 ray_trafo = build_gemotry(param)
-test_mask = np.load(os.path.join(opt.data_path, 'testmask.npy'))
+# test_mask = np.load(os.path.join(opt.data_path, 'testmask.npy'))
 def test_image(data_path, imag_idx, mask_idx):
     txtdir = os.path.join(data_path, 'test_640geo_dir.txt')
     mat_files = open(txtdir, 'r').readlines()
@@ -138,6 +138,43 @@ def test_image(data_path, imag_idx, mask_idx):
     return torch.Tensor(Xma).cuda(), torch.Tensor(XLI).cuda(), torch.Tensor(Xgt).cuda(), torch.Tensor(Mask).cuda(), \
        torch.Tensor(Sma).cuda(), torch.Tensor(SLI).cuda(), torch.Tensor(Sgt).cuda(), torch.Tensor(Tr).cuda(), torch.Tensor(Xprior).cuda()
 
+def test_dental_image(data_path,imag_idx):
+    mat_files = [f for f in os.listdir(data_path) if f.endswith('.mat')]
+    sorted_mat_files = sorted(mat_files,key=lambda x:int(x[3:-4]))
+    mat_path = os.path.join(data_path, sorted_mat_files[imag_idx])
+    mat_data = sio.loadmat(mat_path)
+    struct_data = mat_data['images']
+
+    Xma = struct_data['Input'][0,0]
+    Sma = struct_data['Projection'][0,0]
+    XLI = struct_data['Intp'][0,0]
+    SLI = struct_data['IntpProjection'][0,0]
+    Tr = struct_data['MetalTrace'][0,0]
+
+    M = Xma.copy()
+    M[M>=0.1] = 1
+    M[M<0.1] = 0
+
+    # Sma = np.transpose(Sma,(1,0))
+    # SLI = np.transpose(SLI,(1,0))
+    # Tr = np.transpose(Tr,(1,0))
+
+
+    Xprior = nmar_prior(XLI, M)
+    Xprior = normalize(Xprior, image_get_minmax())  # *255
+    Xma = normalize(Xma, image_get_minmax())
+
+    XLI = normalize(XLI, image_get_minmax())
+    Sma = normalize(Sma, proj_get_minmax())
+
+    SLI = normalize(SLI, proj_get_minmax())
+
+    Tr = 1 -Tr.astype(np.float32)
+    Tr = np.transpose(np.expand_dims(Tr, 2), (2, 0, 1))
+    Mask = M.astype(np.float32)
+    Mask = np.transpose(np.expand_dims(Mask, 2), (2, 0, 1))
+    return torch.Tensor(Xma), torch.Tensor(XLI), torch.Tensor(Mask), \
+            torch.Tensor(Sma), torch.Tensor(SLI), torch.Tensor(Tr), torch.Tensor(Xprior)
 
 def print_network(name, net):
     num_params = 0
@@ -178,6 +215,51 @@ def main():
             plt.imsave(outX_dir + str(idx) + '.png', Xoutnorm.data.cpu().numpy().squeeze(), cmap="gray")
             count += 1
     print('Avg.time={:.4f}'.format(time_test/count))
+
+def dental_main():
+    print('Loading model ...\n')
+    net = InDuDoNet_plus(opt).cuda()
+    print_network("InDuDoNet", net)
+    net.load_state_dict(torch.load(opt.model_dir))
+    net.eval()
+    time_test = 0
+    count = 0
+    for imag_idx in range(1):  # for demo
+        print(imag_idx)
+        data = test_dental_image(opt.data_path, 0)
+        Xma, XLI, M, Sma, SLI, Tr, Xprior = [x.cuda() for x in data]
+        with torch.no_grad():
+            if opt.use_GPU:
+                torch.cuda.synchronize()
+            start_time = time.time()
+            ListX, ListS, ListYS= net(Xma, XLI, Sma, SLI, Tr, Xprior)
+        end_time = time.time()
+        dur_time = end_time - start_time
+        time_test += dur_time
+        print('Times: ', dur_time)
+        Xoutclip = torch.clamp(ListX[-1] / 255.0, 0, 0.5)
+        # Xgtclip = torch.clamp(Xgt / 255.0, 0, 0.5)
+        Xmaclip = torch.clamp(Xma /255.0, 0, 0.5)
+        Xoutnorm = Xoutclip / 0.5
+        Xmanorm = Xmaclip / 0.5
+        # Xgtnorm = Xgtclip / 0.5
+        idx = imag_idx *10  + 1
+        plt.figure()
+        plt.subplot(1,2,1)
+        plt.imshow(ListS[-1].data.cpu().numpy().squeeze(),cmap='gray')
+        plt.subplot(1,2,2)
+        tmp = Xoutnorm.data.cpu().numpy().squeeze()
+        # tmp[tmp>0.1] = 0.1
+        plt.imshow(tmp,cmap='gray')
+        plt.show()
+
+        plt.imsave(input_dir + str(idx) + '.png', Xmanorm.data.cpu().numpy().squeeze(), cmap="gray")
+        # plt.imsave(gt_dir + str(idx) + '.png', Xgtnorm.data.cpu().numpy().squeeze(), cmap="gray")
+        plt.imsave(outX_dir + str(idx) + '.png', Xoutnorm.data.cpu().numpy().squeeze(), cmap="gray")
+        count += 1
+    print('Avg.time={:.4f}'.format(time_test/count))
+
 if __name__ == "__main__":
-    main()
+    # main()
+    dental_main()
 

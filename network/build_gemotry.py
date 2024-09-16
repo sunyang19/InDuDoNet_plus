@@ -6,11 +6,11 @@ import numpy as np
 class initialization:
     def __init__(self):
         self.param = {}
-        self.reso = 512 / 416 * 0.03
+        self.reso = 640 / 640 * 0.03
 
         # image
-        self.param['nx_h'] = 416
-        self.param['ny_h'] = 416
+        self.param['nx_h'] = 640
+        self.param['ny_h'] = 640
         self.param['sx'] = self.param['nx_h']*self.reso
         self.param['sy'] = self.param['ny_h']*self.reso
 
@@ -18,11 +18,11 @@ class initialization:
         self.param['startangle'] = 0
         self.param['endangle'] = 2 * np.pi
 
-        self.param['nProj'] = 640
+        self.param['nProj'] = 600
 
         ## detector
         self.param['su'] = 2*np.sqrt(self.param['sx']**2+self.param['sy']**2)
-        self.param['nu_h'] = 641
+        self.param['nu_h'] = 656
         self.param['dde'] = 1075*self.reso
         self.param['dso'] = 1075*self.reso
 

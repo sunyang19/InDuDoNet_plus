@@ -19,7 +19,7 @@ import numpy as np
 from tensorboardX import SummaryWriter
 from torch.utils.data import DataLoader
 from math import ceil
-from deeplesion.Dataset import MARTrainDataset
+from deeplesion.Dataset import MARTrainDataset,DentalTrainDataset
 from network.indudonet_plus import InDuDoNet_plus
 import warnings
 warnings.filterwarnings("ignore")
@@ -27,7 +27,7 @@ warnings.filterwarnings("ignore")
 
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 parser = argparse.ArgumentParser()
-parser.add_argument("--data_path", type=str, default="./deep_lesion/", help='txt path to training spa-data')
+parser.add_argument("--data_path", type=str, default="./deeplesion/train/", help='txt path to training spa-data')
 parser.add_argument('--workers', type=int, help='number of data loading workers', default=0)
 parser.add_argument('--batchSize', type=int, default=1, help='input batch size')
 parser.add_argument('--patchSize', type=int, default=416, help='the height / width of the input image to network')
@@ -74,6 +74,7 @@ def train_model(net,optimizer, scheduler,datasets):
         phase = 'train'
         for ii, data in enumerate(data_loader):
             Xma, XLI, Xgt, mask, Sma, SLI, Sgt, Tr, Xprior= [x.cuda() for x in data]
+
             net.train()
             optimizer.zero_grad()
             ListX, ListS, ListYS= net(Xma, XLI, Sma, SLI, Tr, Xprior)
@@ -134,7 +135,8 @@ if __name__ == '__main__':
         print('loaded checkpoints, epoch{:d}'.format(opt.resume))
     # load dataset
     train_mask = np.load(os.path.join(opt.data_path, 'trainmask.npy'))
-    train_dataset = MARTrainDataset(opt.data_path, opt.patchSize, train_mask)
+    # train_dataset = MARTrainDataset(opt.data_path, opt.patchSize, train_mask)
+    train_dataset = DentalTrainDataset("../UDA-MAR/Dental_train",640,None)
 
     # train model
     train_model(net, optimizer, scheduler,train_dataset)
